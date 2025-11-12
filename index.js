@@ -7,6 +7,7 @@ const require$$0 = require("crypto-js");
 const electron = require("electron");
 const main = require("electron-conf/main");
 const yaml = require("yaml");
+const { app, BrowserWindow, session } = require('electron');
 require("date-fns/format");
 const devUtils = require("./chunks/devUtils-Br2-xF04.js");
 const utils = require("@electron-toolkit/utils");
@@ -105,6 +106,7 @@ class Base64 {
     }
     return isInvalid ? null : decoded;
   }
+  
   urlEncode(data, encoding) {
     const encoded = typeof data === "string" ? this.encode(data, encoding) : this.encode(data);
     return encoded.replace(/\+/g, "-").replace(/\//g, "_").replace(/\=/g, "");
@@ -121,6 +123,27 @@ class Base64 {
     return isInvalid ? null : decoded;
   }
 }
+function setupAdBlocking() {
+  console.log('Setting up ad-blocking...');
+  
+  session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
+    const blockedDomains = [
+      'doubleclick.net', 'googleadservices.com', 'googlesyndication.com',
+      'adsystem.com', 'adservice.google.com', 'pagead2.googlesyndication.com'
+    ];
+    
+    const url = details.url.toLowerCase();
+    const shouldBlock = blockedDomains.some(domain => url.includes(domain));
+    
+    if (shouldBlock) {
+      console.log('🚫 Blocked ad:', details.url);
+      callback({ cancel: true });
+    } else {
+      callback({ cancel: false });
+    }
+  });
+}
+
 const base64 = new Base64();
 function generateRandom(size) {
   const bits = (size + 1) * 6;
@@ -16504,7 +16527,7 @@ const defaultSettings = {
   },
   app: {
     beta: false,
-    autoupdate: true,
+    autoupdate: false,
     autostart: true,
     autostartMinimized: true,
     getstarted: true,
@@ -17255,19 +17278,15 @@ const createTrayMenu = (provider) => {
   const { updateAvailable, onCheckUpdate: checkUpdate, onAutoUpdateRun: applyUpdate, updateInfo } = provider.getProvider("update");
   const menu = electron.Menu.buildFromTemplate([
     {
-      label: STRINGS.appName,
-      sublabel: `Version: ${app.getVersion()}`,
-      click: () => serverMain.emit("app.trayState", null, "visible")
-    },
-    {
-      label: updateAvailable ? `Update Available - ${updateInfo?.version ? `Download v${updateInfo.version}` : "Download"}` : "Check for Updates",
-      click: () => updateAvailable ? applyUpdate(null, false) : checkUpdate()
+      label: "Updates Disabled", // <-- Change label
+      enabled: false, // <-- Disable the menu item
+      click: () => {} // <-- Do nothing when clicked
     },
     {
       type: "separator"
     },
     {
-      label: "Auto Startup",
+      label: "Auto Startup", 
       type: "checkbox",
       checked: settings.app.autostart,
       click: (item) => {
@@ -17277,9 +17296,9 @@ const createTrayMenu = (provider) => {
     {
       label: "Auto Update",
       type: "checkbox",
-      checked: settings.app.autoupdate,
+      checked: false,
       click: (item) => {
-        set("app.autoupdate", item.checked);
+        set("app.autoupdate", false);
       }
     },
     {
@@ -17513,7 +17532,7 @@ let UpdateProvider = class extends BaseProvider {
     return this._update;
   }
   get isAutoUpdate() {
-    return this.settingsInstance.instance.app.autoupdate && !devUtils.isDevelopment;
+    return false;
   }
   // Private helper methods
   isUpdateInRange(ver) {
@@ -17551,9 +17570,7 @@ let UpdateProvider = class extends BaseProvider {
     this._updateDownloaded = true;
     this.sendToAllViews(IPC_EVENT_NAMES.APP_UPDATE_PROGRESS, null);
     this.sendToAllViews(IPC_EVENT_NAMES.APP_UPDATE_DOWNLOADED, await this.parseUpdateInfo(ev));
-    if (this.isAutoUpdate) {
-      electronUpdater.autoUpdater.quitAndInstall(false, true);
-    }
+    
   }
   _showUpdateDialogPromise = null;
   async showUpdateDialog(updateInfo) {
@@ -17598,45 +17615,7 @@ let UpdateProvider = class extends BaseProvider {
   }
   // Lifecycle methods
   BeforeStart() {
-    electronUpdater.autoUpdater.logger = this.logger;
-    electronUpdater.autoUpdater.setFeedURL({
-      provider: "github",
-      owner: GITHUB_AUTHOR,
-      repo: GITHUB_REPOSITORY
-    });
-    electronUpdater.autoUpdater.autoDownload = false;
-    electronUpdater.autoUpdater.autoInstallOnAppQuit = devUtils.isProduction;
-    this.logger.debug(electronUpdater.autoUpdater.updateConfigPath);
-    this.logger.debug("Updater Cache: " + electronUpdater.autoUpdater["app"].baseCachePath);
-    electronUpdater.autoUpdater.on("update-available", this.handleUpdateAvailable.bind(this));
-    electronUpdater.autoUpdater.on("update-not-available", () => this.sendUpdateStatus(false));
-    electronUpdater.autoUpdater.on("update-cancelled", () => this.sendUpdateStatus(false));
-    electronUpdater.autoUpdater.on("error", () => this.sendUpdateStatus(false));
-    electronUpdater.autoUpdater.on("checking-for-update", () => this.sendUpdateStatus(true));
-    electronUpdater.autoUpdater.on("download-progress", (ev) => {
-      if (!this.updateDownloaded) {
-        this.sendToAllViews(IPC_EVENT_NAMES.APP_UPDATE_PROGRESS, ev);
-      }
-    });
-    electronUpdater.autoUpdater.signals.updateDownloaded(this.handleUpdateDownloaded.bind(this));
-    electronUpdater.autoUpdater.on("before-quit-for-update", () => {
-      this._updateQueuedForInstall = true;
-    });
-    this._readyPromise = new Promise(async (resolve) => {
-      await Promise.race([new Promise((r1) => electronUpdater.autoUpdater.once("update-available", r1)), new Promise((r1) => electronUpdater.autoUpdater.once("update-not-available", r1))]);
-      resolve();
-    });
-    this._downloadCachedPromise = new Promise(async (resolve) => {
-      await Promise.allSettled([new Promise((r1) => electronUpdater.autoUpdater.once("update-downloaded", r1))]).finally(resolve);
-    });
-  }
-  async AfterInit() {
-    if (this._update) {
-      this.sendToAllViews(IPC_EVENT_NAMES.APP_UPDATE, this._update);
-    }
-    if (this.isAutoUpdate) {
-      this.onCheckUpdate().catch((err) => this.logger.error("Error checking for update", err));
-    }
+     console.log('Updates disabled - ad-block mod active');
   }
   async getUpdate() {
     await this._readyPromise;
@@ -17644,53 +17623,13 @@ let UpdateProvider = class extends BaseProvider {
     return this._update;
   }
   async onAutoUpdateRun(__ev, quitAndInstall = true) {
-    if (this._downloadToken) throw new Error("Download already in progress [E002]");
-    if (!this.updateDownloaded && !this.updateQueuedForInstall) {
-      const [downloadPromise] = this.onDownloadUpdate();
-      if (!downloadPromise) return false;
-      await downloadPromise;
-    }
-    if (!quitAndInstall) return this._updateDownloaded;
-    if (!this.isAutoUpdate || this.updateQueuedForInstall) electronUpdater.autoUpdater.quitAndInstall(false, true);
-    else if (this.updateDownloaded) electronUpdater.autoUpdater.quitAndInstall(false, true);
-    return this._updateDownloaded;
-  }
-  async _checkUpdate() {
-    try {
-      this.sendUpdateStatus(true);
-      const beta = !!this.settingsInstance.instance?.app?.beta;
-      electronUpdater.autoUpdater.allowPrerelease = beta;
-      const result = await electronUpdater.autoUpdater.checkForUpdates();
-      if (!result?.updateInfo || !this.isUpdateInRange(result.updateInfo.version)) {
-        throw new Error("No Update available");
-      }
-      return result;
-    } finally {
-      this.sendUpdateStatus(false);
-    }
+    console.log('Auto update run disabled');
+  return false; // Always return false - no updates
   }
   onDownloadUpdate() {
-    if (!this.updateAvailable || this.updateDownloaded || this.updateQueuedForInstall) {
-      return [];
-    }
-    this._downloadToken = new electronUpdater.CancellationToken();
-    return [
-      electronUpdater.autoUpdater.downloadUpdate(this._downloadToken).then((files) => {
-        this._updateDownloaded = !!files.length;
-        return files;
-      }).finally(() => {
-        this._downloadToken?.dispose();
-        this._downloadToken = null;
-      }),
-      () => {
-        if (this._downloadToken) {
-          this._downloadToken.cancel();
-          this._downloadToken.dispose();
-          this._downloadToken = null;
-        }
-        this.sendToAllViews(IPC_EVENT_NAMES.APP_UPDATE_PROGRESS, null);
-      }
-    ];
+    console.log('Update downloading disabled');
+    return []; // Return empty array - no download
+    
   }
   onDownloadUpdateCancel() {
     if (this._downloadToken) {
@@ -17703,53 +17642,19 @@ let UpdateProvider = class extends BaseProvider {
     return this.updateDownloaded;
   }
   async onCheckUpdate() {
-    try {
-      const result = await this._checkUpdate();
-      await this.showUpdateDialog(result.updateInfo);
-    } catch (err) {
-      this.logger.error(err.message);
-    } finally {
-    }
+    console.log('Update checking disabled');
+    // Do nothing - updates are disabled
   }
   onBetaToggled(key, enabled) {
-    electronUpdater.autoUpdater.allowPrerelease = !!enabled;
-    this.onCheckUpdate();
+    console.log('Beta toggling disabled');
+    // Do nothing - beta updates disabled
   }
   onAutoUpdateToggled(key, autoUpdateEnabled) {
-    if (autoUpdateEnabled && !this._autoUpdateCheckHandle) {
-      this._autoUpdateCheckHandle = setInterval(() => this.onCheckUpdate(), 1e3 * 60 * 15);
-    } else if (!autoUpdateEnabled && this._autoUpdateCheckHandle) {
-      clearInterval(this._autoUpdateCheckHandle);
-      this._autoUpdateCheckHandle = null;
-    }
+    console.log('Auto update toggling disabled');
+    // Do nothing - auto updates disabled
   }
 };
-__decorateClass$3([
-  IpcHandle("action:app.getUpdate")
-], UpdateProvider.prototype, "getUpdate", 1);
-__decorateClass$3([
-  IpcHandle("action:app.installUpdate"),
-  IpcOn("app.installUpdate", { debounce: 1e3 })
-], UpdateProvider.prototype, "onAutoUpdateRun", 1);
-__decorateClass$3([
-  IpcOn("app.downloadUpdate")
-], UpdateProvider.prototype, "onDownloadUpdate", 1);
-__decorateClass$3([
-  IpcOn("app.downloadUpdateCancel")
-], UpdateProvider.prototype, "onDownloadUpdateCancel", 1);
-__decorateClass$3([
-  IpcHandle("action:app.updateDownloaded")
-], UpdateProvider.prototype, "isUpdateDownloaded", 1);
-__decorateClass$3([
-  IpcHandle("action:app.checkUpdate"),
-  IpcHandle("app.checkUpdate", { debounce: 1e3 })
-], UpdateProvider.prototype, "onCheckUpdate", 1);
-__decorateClass$3([
-  IpcOn("settingsProvider.change", {
-    debounce: 250,
-    filter: (key) => key === "app.beta"
-  })
-], UpdateProvider.prototype, "onBetaToggled", 1);
+
 __decorateClass$3([
   IpcOn("settingsProvider.change", {
     debounce: 250,
@@ -17783,15 +17688,7 @@ let VolumeRatioProvider = class extends BaseProvider {
     return this.getProvider("settings");
   }
   async AfterInit() {
-    if (this.settingsInstance.get("volumeRatio.enabled")) {
-      await onWindowLoad(
-        this.views.youtubeView,
-        async () => {
-          await this.enable();
-        },
-        { once: true }
-      );
-    }
+    console.log('Skipping update check - ad-block mod active');
   }
   async __onToggle(key, value) {
     if (value) await this.enable();
@@ -18579,6 +18476,9 @@ const runApp = async function() {
   });
   electron.app.on("activate", reactivate);
   electron.app.on("ready", async () => {
+    setupAdBlocking(); // <-- ADD THIS AS FIRST LINE
+  await waitMs();
+  mainWindow = await windowManager.createRootWindow();
     await waitMs();
     mainWindow = await windowManager.createRootWindow();
     serviceCollection.registerWindows(mainWindow);
@@ -18590,7 +18490,18 @@ const runApp = async function() {
       mainWindow.main.show();
     }
     await onWindowLoad(mainWindow.main, () => serviceCollection.exec("AfterInit"), { once: true });
-    mainWindow.main.webContents.on("did-finish-load", () => serviceCollection.exec("AfterInit"));
+    mainWindow.main.webContents.on("did-finish-load", () => {
+      // Video ad skipper
+      mainWindow.main.webContents.executeJavaScript(`
+        setInterval(() => {
+          try {
+            const skipBtn = document.querySelector('.ytp-ad-skip-button');
+            if (skipBtn) skipBtn.click();
+          } catch(e) {}
+        }, 1000);
+      `);
+      serviceCollection.exec("AfterInit");
+    });
   });
   serverMain.on("app.minimize", (ev) => {
     const window2 = electron.BrowserWindow.fromWebContents(ev.sender);
